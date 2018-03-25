@@ -1,0 +1,82 @@
+buildscript {
+    ext {
+        springBootVersion = '2.0.0.RELEASE'
+    }
+    repositories {
+        mavenCentral()
+        jcenter()
+    }
+    dependencies {
+        classpath("org.springframework.boot:spring-boot-gradle-plugin:${springBootVersion}")
+        classpath('com.bmuschko:gradle-docker-plugin:3.0.7')
+    }
+}
+
+apply plugin: 'java'
+apply plugin: 'org.springframework.boot'
+apply plugin: 'io.spring.dependency-management'
+apply plugin: 'com.bmuschko.docker-remote-api'
+
+def appName = 'autosns_spring_example'
+def dockerRepo = 'doogl/autosnsexample'
+
+archivesBaseName = appName
+jar {
+    baseName = appName
+    version = 'v1.17'
+}
+
+sourceCompatibility = 1.8
+
+repositories {
+    mavenCentral()
+    jcenter()
+}
+
+dependencyManagement {
+    imports {
+        mavenBom 'com.amazonaws:aws-java-sdk-bom:1.11.228'
+    }
+}
+
+dependencies {
+    compile project(':AutoSNSClient')
+//    compile project(':SpringAutoSNSClient')
+    compile 'com.amazonaws:aws-java-sdk-sns'
+    compile('javax.inject:javax.inject:1')
+    compile('org.springframework.boot:spring-boot-starter-web')
+}
+
+import com.bmuschko.gradle.docker.tasks.image.Dockerfile
+
+Task copyJarToDockerBuildContext = tasks.create('copyJarToDockerBuildContext', Copy.class) {
+    from project.file("build/libs/${appName}.jar").path
+    into 'build/aws_docker/lib'
+}
+
+copyJarToDockerBuildContext.dependsOn build
+
+Task createDockerFile = tasks.create('createDockerFile', Dockerfile.class) {
+    destFile = project.file('build/aws_docker/Dockerfile')
+    from 'anapsix/alpine-java:8'
+    maintainer 'doogal'
+    addFile('lib', '/lib')
+    entryPoint 'java', '-jar', "/lib/${appName}.jar"
+}
+
+Task buildDockerImage = tasks.create('buildDockerImage', Exec.class) {
+    dependsOn createDockerFile, copyJarToDockerBuildContext
+    commandLine 'docker', 'build', '-t', "${appName}:${jar.version}", createDockerFile.destFile.parentFile.toString()
+}
+
+Task tagDockerImage = tasks.create("tagDockerImage", Exec.class) {
+    dependsOn buildDockerImage
+    commandLine 'docker', 'tag', "${appName}:${jar.version}", "${dockerRepo}:${jar.version}"
+    // docker tag magnus:v1.0 702594278817.dkr.ecr.eu-west-1.amazonaws.com/magnus:latest
+}
+
+Task pushDockerImage = tasks.create("pushDockerImage", Exec.class) {
+    dependsOn tagDockerImage
+    commandLine 'docker', 'push', "${dockerRepo}:${jar.version}"
+    // docker push 702594278817.dkr.ecr.eu-west-1.amazonaws.com/magnus:latest
+}
